@@ -35,59 +35,76 @@ log_warn()   { echo -e "  ${YELLOW}[WARN]${NC} $*"; }
 log_error()  { echo -e "  ${RED}[ERROR]${NC} $*"; ERRORS=$((ERRORS + 1)); }
 
 # ---------------------------------------------------------------------------
-# Map of trashable basenames to their original paths.
+# Restore map: parallel arrays of trash basenames and original paths.
 # This covers everything remove-google.sh might have trashed.
 # ---------------------------------------------------------------------------
 
-declare -A RESTORE_MAP
+RESTORE_NAMES=(
+    # LaunchAgents / LaunchDaemons
+    "com.google.keystone.agent.plist"
+    "com.google.keystone.xpcservice.plist"
+    "com.google.keystone.daemon.plist"
+    "com.google.GoogleUpdater.wake.system.plist"
+    "com.google.GoogleUpdater.wake.login.plist"
+    # Applications
+    "Google Chrome.app"
+    "Google Earth Pro.app"
+    "Google Drive.app"
+    # System directories
+    "Google"
+    # User data
+    "com.google.GoogleUpdater"
+    "com.google.Chrome.plist"
+    "com.google.GECommonSettings.plist"
+    "com.google.GoogleEarthPro.plist"
+    "com.google.Keystone.Agent.plist"
+    "com.google.Chrome"
+    "GoogleSoftwareUpdateAgent.log"
+)
 
-# LaunchAgents / LaunchDaemons
-RESTORE_MAP["com.google.keystone.agent.plist"]="/Library/LaunchAgents/com.google.keystone.agent.plist"
-RESTORE_MAP["com.google.keystone.xpcservice.plist"]="/Library/LaunchAgents/com.google.keystone.xpcservice.plist"
-RESTORE_MAP["com.google.keystone.daemon.plist"]="/Library/LaunchDaemons/com.google.keystone.daemon.plist"
-RESTORE_MAP["com.google.GoogleUpdater.wake.system.plist"]="/Library/LaunchDaemons/com.google.GoogleUpdater.wake.system.plist"
-RESTORE_MAP["com.google.GoogleUpdater.wake.login.plist"]="$HOME/Library/LaunchAgents/com.google.GoogleUpdater.wake.login.plist"
-
-# Applications
-RESTORE_MAP["Google Chrome.app"]="/Applications/Google Chrome.app"
-RESTORE_MAP["Google Earth Pro.app"]="/Applications/Google Earth Pro.app"
-RESTORE_MAP["Google Drive.app"]="/Applications/Google Drive.app"
-
-# System directories
-RESTORE_MAP["Google"]="/Library/Google"
-
-# User directories
-RESTORE_MAP["com.google.GoogleUpdater"]="$HOME/Library/Caches/com.google.GoogleUpdater"
-RESTORE_MAP["com.google.Chrome.plist"]="$HOME/Library/Preferences/com.google.Chrome.plist"
-RESTORE_MAP["com.google.GECommonSettings.plist"]="$HOME/Library/Preferences/com.google.GECommonSettings.plist"
-RESTORE_MAP["com.google.GoogleEarthPro.plist"]="$HOME/Library/Preferences/com.google.GoogleEarthPro.plist"
-RESTORE_MAP["com.google.Keystone.Agent.plist"]="$HOME/Library/Preferences/com.google.Keystone.Agent.plist"
-RESTORE_MAP["com.google.Chrome"]="$HOME/Library/WebKit/com.google.Chrome"
-RESTORE_MAP["GoogleSoftwareUpdateAgent.log"]="$HOME/Library/Logs/GoogleSoftwareUpdateAgent.log"
+RESTORE_PATHS=(
+    # LaunchAgents / LaunchDaemons
+    "/Library/LaunchAgents/com.google.keystone.agent.plist"
+    "/Library/LaunchAgents/com.google.keystone.xpcservice.plist"
+    "/Library/LaunchDaemons/com.google.keystone.daemon.plist"
+    "/Library/LaunchDaemons/com.google.GoogleUpdater.wake.system.plist"
+    "$HOME/Library/LaunchAgents/com.google.GoogleUpdater.wake.login.plist"
+    # Applications
+    "/Applications/Google Chrome.app"
+    "/Applications/Google Earth Pro.app"
+    "/Applications/Google Drive.app"
+    # System directories
+    "/Library/Google"
+    # User data
+    "$HOME/Library/Caches/com.google.GoogleUpdater"
+    "$HOME/Library/Preferences/com.google.Chrome.plist"
+    "$HOME/Library/Preferences/com.google.GECommonSettings.plist"
+    "$HOME/Library/Preferences/com.google.GoogleEarthPro.plist"
+    "$HOME/Library/Preferences/com.google.Keystone.Agent.plist"
+    "$HOME/Library/WebKit/com.google.Chrome"
+    "$HOME/Library/Logs/GoogleSoftwareUpdateAgent.log"
+)
 
 # ---------------------------------------------------------------------------
-# Also search for items trashed with timestamp suffix (_1234567890)
+# Search for items in Trash (including timestamp-suffixed collisions)
 # ---------------------------------------------------------------------------
 
 find_in_trash() {
-    local basename="$1"
-    local matches=()
+    local name="$1"
 
-    # Exact match
-    if [ -e "$TRASH/$basename" ]; then
-        matches+=("$TRASH/$basename")
+    # Exact match first
+    if [ -e "$TRASH/$name" ]; then
+        echo "$TRASH/$name"
+        return 0
     fi
 
     # Timestamp-suffixed match (from safe_trash collision handling)
-    for candidate in "$TRASH/${basename}_"[0-9]*; do
+    for candidate in "$TRASH/${name}_"[0-9]*; do
         if [ -e "$candidate" ]; then
-            matches+=("$candidate")
+            echo "$candidate"
+            return 0
         fi
     done
-
-    if [ ${#matches[@]} -gt 0 ]; then
-        echo "${matches[0]}"  # Return the first (most likely) match
-    fi
 }
 
 safe_restore() {
@@ -144,7 +161,7 @@ remove_blocker() {
     local blocker="$HOME/Library/Google"
     if [ -f "$blocker" ] && [ ! -d "$blocker" ]; then
         if [ "$DRY_RUN" = true ]; then
-            log_dry "Would remove blocker file: $blocker"
+            echo -e "  ${CYAN}[DRY RUN]${NC} Would remove blocker file: $blocker"
         else
             chmod 644 "$blocker" 2>/dev/null || true
             rm "$blocker"
@@ -160,17 +177,20 @@ remove_blocker() {
 scan() {
     echo -e "\n${GREEN}=== Scanning Trash for Google items ===${NC}\n"
     local found=0
+    local i=0
 
-    for basename in "${!RESTORE_MAP[@]}"; do
+    while [ $i -lt ${#RESTORE_NAMES[@]} ]; do
+        local name="${RESTORE_NAMES[$i]}"
+        local dest="${RESTORE_PATHS[$i]}"
         local trash_path
-        trash_path=$(find_in_trash "$basename")
+        trash_path=$(find_in_trash "$name")
         if [ -n "$trash_path" ]; then
-            local dest="${RESTORE_MAP[$basename]}"
             local size
             size=$(du -sh "$trash_path" 2>/dev/null | cut -f1)
             log_found "$trash_path ($size) -> $dest"
             found=$((found + 1))
         fi
+        i=$((i + 1))
     done
 
     # Check for blocker file
@@ -178,20 +198,6 @@ scan() {
         echo -e "\n  ${YELLOW}[BLOCKER]${NC} ~/Library/Google blocker file exists (will be removed on restore)"
         found=$((found + 1))
     fi
-
-    # Also scan for Application Support/Google
-    local as_trash
-    as_trash=$(find_in_trash "Google")
-    # Check specifically for the user-level one (might have timestamp suffix)
-    for candidate in "$TRASH/Google" "$TRASH/Google_"[0-9]*; do
-        if [ -d "$candidate" ]; then
-            # Determine if it's the /Library/Google or ~/Library/Application Support/Google
-            # by checking contents
-            if [ -d "$candidate/Chrome" ] || [ -d "$candidate/GoogleUpdater" ]; then
-                log_found "$candidate -> likely Application Support or /Library"
-            fi
-        fi
-    done
 
     echo ""
     if [ "$found" -eq 0 ]; then
@@ -212,17 +218,21 @@ restore_all() {
     # Remove blocker first
     remove_blocker
 
+    # Check if sudo will be needed
     local sudo_needed=false
-    for basename in "${!RESTORE_MAP[@]}"; do
+    local i=0
+    while [ $i -lt ${#RESTORE_NAMES[@]} ]; do
+        local name="${RESTORE_NAMES[$i]}"
+        local dest="${RESTORE_PATHS[$i]}"
         local trash_path
-        trash_path=$(find_in_trash "$basename")
+        trash_path=$(find_in_trash "$name")
         if [ -n "$trash_path" ]; then
-            local dest="${RESTORE_MAP[$basename]}"
             if needs_sudo "$dest"; then
                 sudo_needed=true
                 break
             fi
         fi
+        i=$((i + 1))
     done
 
     if [ "$sudo_needed" = true ] && [ "$DRY_RUN" = false ]; then
@@ -235,17 +245,21 @@ restore_all() {
         fi
     fi
 
-    for basename in "${!RESTORE_MAP[@]}"; do
+    # Restore items
+    i=0
+    while [ $i -lt ${#RESTORE_NAMES[@]} ]; do
+        local name="${RESTORE_NAMES[$i]}"
+        local dest="${RESTORE_PATHS[$i]}"
         local trash_path
-        trash_path=$(find_in_trash "$basename")
+        trash_path=$(find_in_trash "$name")
         if [ -n "$trash_path" ]; then
-            local dest="${RESTORE_MAP[$basename]}"
             local use_sudo="false"
             if needs_sudo "$dest"; then
                 use_sudo="true"
             fi
             safe_restore "$trash_path" "$dest" "$use_sudo"
         fi
+        i=$((i + 1))
     done
 
     # Reload any restored plists
