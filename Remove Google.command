@@ -1,32 +1,6 @@
 #!/bin/bash
-# Double-click this file in Finder to run the Google removal audit.
-# It opens Terminal and runs the audit first so you can see what will be removed.
-
+# Double-click this file in Finder to run the Google removal tool.
 cd "$(dirname "$0")"
-echo ""
-echo "============================================"
-echo "  Google Removal Tool"
-echo "============================================"
-echo ""
-echo "Nothing is permanently deleted — files are moved to Trash."
-echo "You will be asked before each step and each app."
-echo ""
-echo "Choose an option:"
-echo ""
-echo "  1) Audit   - Scan and report (no changes)"
-echo "  2) Dry Run - Preview what would happen (no changes)"
-echo "  3) Remove  - Start removal (asks before each step)"
-echo "  4) Quit"
-echo ""
-read -rp "Enter choice [1-4]: " choice
-
-case "$choice" in
-    1) bash remove-google.sh audit ;;
-    2) bash remove-google.sh dryrun ;;
-    3) bash remove-google.sh all ;;
-    4) echo "Bye." ;;
-    *) echo "Invalid choice." ;;
-esac
-
+bash remove-google.sh
 echo ""
 read -rp "Press Enter to close..."

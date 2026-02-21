@@ -10,7 +10,32 @@ Safely remove **all** Google software from your Mac — not just Chrome, but eve
 2. Open the `remove-google-macos-main` folder
 3. Double-click **`Remove Google.command`**
 4. If macOS says it can't be opened because it's from an unidentified developer: go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway**
-5. Terminal opens with a simple menu — start with option **1 (Audit)** to see what's on your system before removing anything
+5. The script scans your Mac and shows you what it found, then gives you a menu
+
+## How it works
+
+When you run the script, it:
+
+1. **Scans your Mac** and shows you everything Google it finds
+2. **Gives you a menu:**
+
+```
+1) Remove   — remove Google software (asks about each app)
+2) Dry run  — preview what would happen (no changes)
+3) Restore  — put previously removed items back from Trash
+4) Quit
+```
+
+If you choose **Remove**, it:
+
+- Stops all running Google processes and background services
+- **Asks you about each Google app individually** — you can keep some and remove others
+- Removes Google's system directories, caches, preferences, and support files
+- Installs a blocker to prevent Google's updater from reinstalling itself
+
+If you choose **Dry run**, it shows everything it would do without actually changing anything.
+
+If you choose **Restore**, it scans your Trash for previously removed Google items and puts them back.
 
 ## What it removes
 
@@ -18,7 +43,7 @@ This removes **all Google software**, not just Chrome.
 
 ### Applications (you choose which ones)
 
-The script checks for these apps in `/Applications/` and asks about each one individually — you can keep some and remove others:
+The script asks about each app individually — you can keep some and remove others:
 
 - **Google Chrome** — web browser
 - **Google Earth Pro** — desktop mapping/satellite app
@@ -26,109 +51,32 @@ The script checks for these apps in `/Applications/` and asks about each one ind
 
 If an app isn't installed, it's simply skipped.
 
-### Background services (the hidden stuff)
+### Background services (removed automatically)
 
 These run silently even after you delete Chrome:
 
-- **Google Updater (Keystone)** — a hidden service that runs every hour, checks for updates, and sends hardware info to Google. This is usually what people want gone.
-- **LaunchAgents and LaunchDaemons** — the system configs in `/Library/LaunchAgents/` and `/Library/LaunchDaemons/` that tell macOS to start Google services on login and on a timer
+- **Google Updater (Keystone)** — a hidden service that runs every hour, checks for updates, and sends hardware info to Google
+- **LaunchAgents and LaunchDaemons** — the system configs that tell macOS to start Google services on login and on a timer
 
-### Data and support files
+### Data and support files (removed automatically)
 
 - **System directories** — `/Library/Google/` and `/Library/Application Support/Google/`
 - **Caches** — `~/Library/Caches/com.google.*`
-- **Preferences** — `~/Library/Preferences/com.google.*` (Chrome settings, Earth Pro settings, Keystone config)
+- **Preferences** — `~/Library/Preferences/com.google.*`
 - **HTTP storage** — `~/Library/HTTPStorages/com.google.*`
 - **WebKit data** — `~/Library/WebKit/com.google.*`
 - **Saved state** — `~/Library/Saved Application State/com.google.*`
 - **Containers** — `~/Library/Containers/com.google.*`
 - **Log files** — `~/Library/Logs/GoogleSoftwareUpdateAgent.log`
 
-### Anti-reinstall blocker
-
-After removal, the script creates a locked file at `~/Library/Google` that prevents Google's updater from silently reinstalling itself.
-
-## Can I keep some things and remove others?
-
-Yes. The script asks about each application individually — for example, you can keep Google Earth Pro but remove everything else. The background services and cached data are handled as separate phases, each with its own confirmation prompt.
-
-You can also run individual phases if you only want to remove specific categories:
-
-```bash
-bash remove-google.sh phase1   # Kill running Google processes only
-bash remove-google.sh phase2   # Remove background services only
-bash remove-google.sh phase3   # Remove applications only (asks per app)
-bash remove-google.sh phase4   # Remove caches/prefs/data only
-bash remove-google.sh phase5   # Install anti-reinstall blocker only
-```
-
 ## Is it safe?
 
-Yes. The script is designed to be cautious:
+Yes:
 
-- **Nothing is permanently deleted** — everything is moved to your Trash, so you can recover it
+- **Nothing is permanently deleted** — everything is moved to your Trash
+- **You choose which apps to remove** — the script asks about each one individually
 - **Scans first** — always shows you what it found before doing anything
-- **Asks permission** — confirms with you before each step, and asks per app
-- **Dry run mode** — lets you preview every action without making any changes
-- **Included restore script** — puts everything back from Trash if you change your mind
-
-## Quick start
-
-### Option 1: Double-click (recommended)
-
-Double-click **`Remove Google.command`** in Finder. Terminal opens with a menu:
-
-```
-1) Audit   - Scan and report (no changes)
-2) Dry Run - Preview all changes
-3) Remove  - Remove all Google software
-4) Quit
-```
-
-Start with **1** to see what Google software is on your Mac. When you're ready, use **3** to remove it.
-
-### Option 2: Command line
-
-```bash
-# See what Google software is on your system
-bash remove-google.sh audit
-
-# Preview what would be removed (no changes)
-bash remove-google.sh dryrun
-
-# Remove everything (confirms each phase, asks per app)
-bash remove-google.sh all
-```
-
-## Restoring
-
-Changed your mind? As long as you haven't emptied the Trash, you can put everything back.
-
-Double-click **`Restore Google.command`** in Finder — it has the same menu style:
-
-```
-1) Scan    - Show what can be restored from Trash
-2) Dry Run - Preview restore without changes
-3) Restore - Restore all Google items from Trash
-4) Quit
-```
-
-Or from the command line:
-
-```bash
-bash restore-google.sh scan      # See what can be restored
-bash restore-google.sh dryrun    # Preview restore without changes
-bash restore-google.sh all       # Put it all back
-```
-
-## How it works
-
-The script runs in 5 phases, in this order:
-
-1. **Kill processes** — stops any running Google software
-2. **Unload services** — stops the hourly updater and removes its system configs
-3. **Trash apps** — asks about each Google app individually, moves selected ones to Trash
-4. **Trash user data** — moves caches, preferences, and support files to Trash
-5. **Block reinstall** — prevents Google's updater from reinstalling itself
+- **Dry run mode** — preview every action without making any changes
+- **Built-in restore** — run the script again and choose Restore to put everything back from Trash
 
 A **reboot** after running is recommended.
