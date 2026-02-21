@@ -445,8 +445,20 @@ phase3_trash_apps() {
     local app_found=false
     for app in "${GOOGLE_APPS[@]}"; do
         if [ -d "$app" ]; then
-            safe_trash "$app" true
             app_found=true
+            local app_name
+            app_name=$(basename "$app")
+            if [ "$DRY_RUN" = true ]; then
+                safe_trash "$app" true
+            else
+                echo -e "  ${YELLOW}Remove ${app_name}? (yes/no/skip)${NC}"
+                read -r response
+                if [ "$response" = "yes" ]; then
+                    safe_trash "$app" true
+                else
+                    log_info "Kept: $app"
+                fi
+            fi
         fi
     done
     if [ "$app_found" = false ]; then
