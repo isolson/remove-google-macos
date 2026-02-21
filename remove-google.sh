@@ -610,6 +610,9 @@ main() {
     echo -e "${GREEN}  Google Software Removal Script${NC}"
     echo -e "${GREEN}================================================${NC}"
     echo ""
+    echo -e "  ${BLUE}Nothing is permanently deleted — files are moved to Trash.${NC}"
+    echo -e "  ${BLUE}You will be asked before each step and each app.${NC}"
+    echo ""
     echo -e "  Trash destination: ${BLUE}$TRASH${NC}"
     echo -e "  Current user:     ${BLUE}$(whoami) (UID $CURRENT_UID)${NC}"
     echo ""
@@ -636,8 +639,9 @@ main() {
         all)
             phase0_audit
             echo ""
-            echo -e "${YELLOW}The audit above shows what will be removed.${NC}"
-            confirm_phase "Full removal (phases 1-5)" || exit 0
+            echo -e "${YELLOW}The audit above shows what was found.${NC}"
+            echo -e "${YELLOW}You will be asked to confirm each step, and each app individually.${NC}"
+            confirm_phase "Begin removal (you will be prompted at each step)" || exit 0
             phase1_kill_processes
             phase2_unload_launch_items
             phase3_trash_apps
