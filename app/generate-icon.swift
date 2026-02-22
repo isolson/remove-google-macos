@@ -1,10 +1,12 @@
 import AppKit
+import CoreText
 
 let size = 1024
 let image = NSImage(size: NSSize(width: size, height: size))
 image.lockFocus()
 
 let s = CGFloat(size)
+let context = NSGraphicsContext.current!.cgContext
 
 // Dark rounded-rect background
 let bgRect = CGRect(x: 0, y: 0, width: s, height: s)
@@ -12,41 +14,55 @@ let bgPath = NSBezierPath(roundedRect: bgRect, xRadius: s * 0.22, yRadius: s * 0
 NSColor(red: 0.13, green: 0.13, blue: 0.15, alpha: 1).setFill()
 bgPath.fill()
 
-// Draw the Google "G" — large, centered, slightly muted
-let fontSize = s * 0.58
-let font = NSFont.systemFont(ofSize: fontSize, weight: .bold)
-let gAttrs: [NSAttributedString.Key: Any] = [
-    .font: font,
-    .foregroundColor: NSColor(red: 0.55, green: 0.55, blue: 0.58, alpha: 1)
-]
-let gStr = NSAttributedString(string: "G", attributes: gAttrs)
-let gSize = gStr.size()
-let gOrigin = NSPoint(
-    x: (s - gSize.width) / 2,
-    y: (s - gSize.height) / 2 - s * 0.01
-)
-gStr.draw(at: gOrigin)
+// Draw the "G" centered using Core Text path for precise control
+let fontSize = s * 0.52
+let font = CTFontCreateWithName("Helvetica Neue Bold" as CFString, fontSize, nil)
+var glyphs: [CGGlyph] = [0]
+var chars: [UniChar] = [0x47] // "G"
+CTFontGetGlyphsForCharacters(font, &chars, &glyphs, 1)
 
-// Draw prohibition circle (red, slightly transparent)
-let context = NSGraphicsContext.current!.cgContext
-let prohibColor = NSColor(red: 0.90, green: 0.22, blue: 0.20, alpha: 0.92)
-let lineWidth = s * 0.065
-let inset = s * 0.12
-let circleRect = bgRect.insetBy(dx: inset, dy: inset)
+// Get the glyph's actual path bounding box
+if let glyphPath = CTFontCreatePathForGlyph(font, glyphs[0], nil) {
+    let pathBounds = glyphPath.boundingBox
+
+    // Center the glyph path in the icon
+    let offsetX = (s - pathBounds.width) / 2 - pathBounds.origin.x
+    let offsetY = (s - pathBounds.height) / 2 - pathBounds.origin.y
+
+    context.saveGState()
+    context.translateBy(x: offsetX, y: offsetY)
+
+    // Fill the G
+    context.addPath(glyphPath)
+    context.setFillColor(NSColor(red: 0.50, green: 0.50, blue: 0.54, alpha: 1).cgColor)
+    context.fillPath()
+
+    context.restoreGState()
+}
+
+// Draw prohibition symbol
+let prohibColor = NSColor(red: 0.88, green: 0.20, blue: 0.18, alpha: 0.92).cgColor
+let lineWidth = s * 0.058
+let inset = s * 0.15
+
+let center = CGPoint(x: s / 2, y: s / 2)
+let radius = s / 2 - inset
 
 // Circle
-context.setStrokeColor(prohibColor.cgColor)
+context.setStrokeColor(prohibColor)
 context.setLineWidth(lineWidth)
-context.strokeEllipse(in: circleRect.insetBy(dx: lineWidth / 2, dy: lineWidth / 2))
+context.strokeEllipse(in: CGRect(
+    x: center.x - radius, y: center.y - radius,
+    width: radius * 2, height: radius * 2
+).insetBy(dx: lineWidth / 2, dy: lineWidth / 2))
 
-// Diagonal slash (top-left to bottom-right)
-let center = CGPoint(x: s / 2, y: s / 2)
-let radius = (s / 2 - inset) - lineWidth / 2
-let angle1 = CGFloat.pi * 0.75   // 135° (upper-left)
-let angle2 = -CGFloat.pi * 0.25  // -45° (lower-right)
+// Diagonal slash (upper-left to lower-right)
+let innerRadius = radius - lineWidth / 2
+let angle1 = CGFloat.pi * 0.75
+let angle2 = -CGFloat.pi * 0.25
 context.setLineCap(.round)
-context.move(to: CGPoint(x: center.x + radius * cos(angle1), y: center.y + radius * sin(angle1)))
-context.addLine(to: CGPoint(x: center.x + radius * cos(angle2), y: center.y + radius * sin(angle2)))
+context.move(to: CGPoint(x: center.x + innerRadius * cos(angle1), y: center.y + innerRadius * sin(angle1)))
+context.addLine(to: CGPoint(x: center.x + innerRadius * cos(angle2), y: center.y + innerRadius * sin(angle2)))
 context.strokePath()
 
 image.unlockFocus()
