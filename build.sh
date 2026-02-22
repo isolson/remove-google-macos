@@ -33,12 +33,31 @@ xcrun swiftc app/RemoveGoogle.swift \
     -framework SwiftUI \
     -o "$BUILD_DIR/$APP_NAME"
 
+# Generate app icon
+echo "  Generating icon..."
+xcrun swiftc app/generate-icon.swift \
+    -framework AppKit \
+    -o "$BUILD_DIR/generate-icon"
+"$BUILD_DIR/generate-icon" "$BUILD_DIR/icon_1024.png"
+
+mkdir -p "$BUILD_DIR/AppIcon.iconset"
+for sz in 16 32 128 256 512; do
+    sips -z $sz $sz "$BUILD_DIR/icon_1024.png" --out "$BUILD_DIR/AppIcon.iconset/icon_${sz}x${sz}.png" > /dev/null 2>&1
+    sz2=$((sz * 2))
+    sips -z $sz2 $sz2 "$BUILD_DIR/icon_1024.png" --out "$BUILD_DIR/AppIcon.iconset/icon_${sz}x${sz}@2x.png" > /dev/null 2>&1
+done
+cp "$BUILD_DIR/icon_1024.png" "$BUILD_DIR/AppIcon.iconset/icon_512x512@2x.png"
+iconutil -c icns "$BUILD_DIR/AppIcon.iconset" -o "$BUILD_DIR/AppIcon.icns" 2>/dev/null
+
 # Create .app bundle structure
 echo "  Assembling app bundle..."
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 mv "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+if [ -f "$BUILD_DIR/AppIcon.icns" ]; then
+    cp "$BUILD_DIR/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+fi
 
 # Info.plist
 cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
@@ -64,6 +83,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>

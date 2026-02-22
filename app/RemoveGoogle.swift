@@ -30,6 +30,15 @@ struct AppDef {
     let name: String
     let bundleIds: [String]
     let extraDirs: [String]  // additional specific directories (relative to home)
+    let expectedBundleId: String?  // if set, verify before treating as Google (for ambiguous names like Chat.app)
+
+    init(appPath: String, name: String, bundleIds: [String], extraDirs: [String], expectedBundleId: String? = nil) {
+        self.appPath = appPath
+        self.name = name
+        self.bundleIds = bundleIds
+        self.extraDirs = extraDirs
+        self.expectedBundleId = expectedBundleId
+    }
 }
 
 // MARK: - Scanner / Remover
@@ -41,6 +50,7 @@ class GoogleManager: ObservableObject {
     @Published var isWorking: Bool = false
     @Published var isDone: Bool = false
     @Published var mode: Mode = .ready
+    @Published var installBlocker: Bool = true
 
     enum Mode {
         case ready, removing, removed, restoring, restored
@@ -128,8 +138,7 @@ class GoogleManager: ObservableObject {
 
             AppDef(appPath: "/Applications/Android Studio.app", name: "Android Studio",
                    bundleIds: ["com.google.android.studio"],
-                   extraDirs: [home + "/Library/Application Support/Google/AndroidStudio",
-                               home + "/.android"]),
+                   extraDirs: [home + "/Library/Application Support/Google/AndroidStudio"]),
 
             AppDef(appPath: "/Applications/Google Ads Editor.app", name: "Google Ads Editor",
                    bundleIds: ["com.google.googleadseditor"],
@@ -142,7 +151,8 @@ class GoogleManager: ObservableObject {
             AppDef(appPath: "/Applications/Chat.app", name: "Google Chat",
                    bundleIds: ["com.google.chat"],
                    extraDirs: [home + "/Library/Application Support/Chat",
-                               home + "/Library/Logs/Chat"]),
+                               home + "/Library/Logs/Chat"],
+                   expectedBundleId: "com.google.chat"),
 
             AppDef(appPath: "/Library/Input Methods/GoogleJapaneseInput.app", name: "Google Japanese Input",
                    bundleIds: ["com.google.inputmethod.Japanese"],
@@ -190,7 +200,15 @@ class GoogleManager: ObservableObject {
         for def in appDefs {
             var paths = [def.appPath]
             var dataSize: UInt64 = 0
-            let appExists = fm.fileExists(atPath: def.appPath)
+            var appExists = fm.fileExists(atPath: def.appPath)
+
+            // Verify bundle ID for apps with ambiguous names (e.g., Chat.app)
+            if appExists, let expected = def.expectedBundleId {
+                let actual = bundleIdAt(def.appPath)
+                if actual != expected {
+                    appExists = false // Not Google's app, skip it
+                }
+            }
 
             // Search Library subdirs for matching bundle IDs
             for id in def.bundleIds {
@@ -402,6 +420,22 @@ class GoogleManager: ObservableObject {
             scanned.append(item)
         }
 
+        // --- Android SDK / debug data (shared by all Android dev tools) ---
+        let androidDir = home + "/.android"
+        if fm.fileExists(atPath: androidDir) {
+            let androidSize = dirSize(androidDir)
+            var item = GoogleItem(
+                name: "Android SDK data",
+                detail: "\(formatBytes(androidSize)) — also used by Flutter, React Native",
+                paths: [androidDir],
+                category: .data,
+                requiresSudo: false
+            )
+            item.isFound = true
+            item.isSelected = false  // Default OFF — shared with non-Google tools
+            scanned.append(item)
+        }
+
         DispatchQueue.main.async {
             self.items = scanned
             let foundCount = scanned.filter({ $0.isFound }).count
@@ -445,9 +479,9 @@ class GoogleManager: ObservableObject {
                 if fm.fileExists(atPath: path) {
                     let label = plistLabel(path)
                     if let label = label {
-                        sudoCommands.append("launchctl bootout \(domain)/\(label) 2>/dev/null || true")
+                        sudoCommands.append("launchctl bootout \(shellEscape(domain))/\(shellEscape(label)) 2>/dev/null || true")
                     } else {
-                        sudoCommands.append("launchctl unload -w '\(path)' 2>/dev/null || true")
+                        sudoCommands.append("launchctl unload -w '\(shellEscape(path))' 2>/dev/null || true")
                     }
                 }
             }
@@ -462,7 +496,8 @@ class GoogleManager: ObservableObject {
                     if fm.fileExists(atPath: path) {
                         if item.requiresSudo || !path.hasPrefix(NSHomeDirectory()) {
                             let dest = trashDest(for: path)
-                            sudoCommands.append("mv '\(path)' '\(dest)'")
+                            sudoCommands.append("mv '\(shellEscape(path))' '\(shellEscape(dest))'")
+
                         } else {
                             userPaths.append(path)
                         }
@@ -488,12 +523,10 @@ class GoogleManager: ObservableObject {
                 ])
             }
 
-            // Install blocker if requested (check on main thread)
+            // Install blocker if requested
             var shouldBlock = false
             DispatchQueue.main.sync {
-                // installBlocker is on ContentView, but we pass it through
-                // For now, always install blocker — controlled by UI toggle
-                shouldBlock = true
+                shouldBlock = self.installBlocker
             }
             if shouldBlock {
                 let blockerPath = NSHomeDirectory() + "/Library/Google"
@@ -582,7 +615,7 @@ class GoogleManager: ObservableObject {
                 if let trashItem = findInTrash(entry.basename) {
                     if entry.sudo {
                         let parentDir = (entry.dest as NSString).deletingLastPathComponent
-                        sudoCommands.append("mkdir -p '\(parentDir)' && mv '\(trashItem)' '\(entry.dest)'")
+                        sudoCommands.append("mkdir -p '\(shellEscape(parentDir))' && mv '\(shellEscape(trashItem))' '\(shellEscape(entry.dest))'")
                     } else {
                         userRestores.append((from: trashItem, to: entry.dest))
                     }
@@ -630,7 +663,7 @@ class GoogleManager: ObservableObject {
             for (path, sudo) in reloadPlists {
                 if fm.fileExists(atPath: path) {
                     if sudo {
-                        let escaped = "launchctl load -w '\(path)' 2>/dev/null || true"
+                        let escaped = "launchctl load -w '\(shellEscape(path))' 2>/dev/null || true"
                             .replacingOccurrences(of: "\"", with: "\\\"")
                         _ = shell("/usr/bin/osascript", [
                             "-e", "do shell script \"\(escaped)\" with administrator privileges"
@@ -661,6 +694,12 @@ class GoogleManager: ObservableObject {
         DispatchQueue.main.async { self.status = msg }
     }
 
+    /// Escape a string for safe use inside single quotes in a shell command.
+    /// Prevents command injection from adversarial filenames.
+    private func shellEscape(_ s: String) -> String {
+        return s.replacingOccurrences(of: "'", with: "'\\''")
+    }
+
     private func shell(_ cmd: String, _ args: [String]) -> String {
         let task = Process()
         let pipe = Pipe()
@@ -679,18 +718,25 @@ class GoogleManager: ObservableObject {
         if let label = label {
             if sudo {
                 _ = shell("/usr/bin/osascript", ["-e",
-                    "do shell script \"launchctl bootout \(domain)/\(label) 2>/dev/null || true\" with administrator privileges"])
+                    "do shell script \"launchctl bootout \(shellEscape(domain))/\(shellEscape(label)) 2>/dev/null || true\" with administrator privileges"])
             } else {
                 _ = shell("/bin/launchctl", ["bootout", "\(domain)/\(label)"])
             }
         } else {
             if sudo {
                 _ = shell("/usr/bin/osascript", ["-e",
-                    "do shell script \"launchctl unload -w '\(path)' 2>/dev/null || true\" with administrator privileges"])
+                    "do shell script \"launchctl unload -w '\(shellEscape(path))' 2>/dev/null || true\" with administrator privileges"])
             } else {
                 _ = shell("/bin/launchctl", ["unload", "-w", path])
             }
         }
+    }
+
+    private func bundleIdAt(_ appPath: String) -> String? {
+        let plistPath = appPath + "/Contents/Info.plist"
+        let output = shell("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", plistPath])
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func plistLabel(_ path: String) -> String? {
@@ -764,7 +810,6 @@ class GoogleManager: ObservableObject {
 
 struct ContentView: View {
     @ObservedObject var manager = GoogleManager()
-    @State private var installBlocker = true
     @State private var hovering = false
     @State private var showingInfoFor: UUID? = nil
 
@@ -844,7 +889,7 @@ struct ContentView: View {
 
             // Blocker toggle with inline explanation
             if !manager.isDone {
-                Toggle(isOn: $installBlocker) {
+                Toggle(isOn: $manager.installBlocker) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Block Google from reinstalling")
                             .font(mono)
