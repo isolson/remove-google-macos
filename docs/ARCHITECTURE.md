@@ -64,5 +64,4 @@ Minimal `NSWindow` setup with no state restoration, no UserDefaults, no persiste
 ## Known limitations
 
 - Restore relies on finding items in Trash by basename. If the user renames or empties Trash, restore won't find them.
-- The CLI script (`remove-google.sh`) and the app are maintained separately. The app is the primary interface.
 - `.help()` tooltips don't render with `fullSizeContentView` window style; info button popovers are used instead.

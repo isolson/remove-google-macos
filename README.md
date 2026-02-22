@@ -38,12 +38,6 @@ Each app includes its own data (caches, preferences, containers). Unchecking an 
 - [Architecture and technical details](docs/ARCHITECTURE.md)
 - [What Google installs on your Mac](docs/GOOGLE_ON_MACOS.md)
 
-## Command-line alternative
-
-```bash
-bash remove-google.sh
-```
-
 ## Signing
 
 ```bash
