@@ -7,9 +7,9 @@ struct GoogleItem: Identifiable {
     let id = UUID()
     let name: String
     var detail: String
-    let paths: [String]         // files/dirs to check and remove
+    var paths: [String]         // files/dirs to check and remove
     let category: Category
-    let requiresSudo: Bool
+    var requiresSudo: Bool
     var isFound: Bool = false
     var isSelected: Bool = true
     var isRemoved: Bool = false
@@ -21,7 +21,15 @@ struct GoogleItem: Identifiable {
         case data = "Data & Preferences"
     }
 
-    var isTogglable: Bool { category == .app }
+    var isTogglable: Bool { true }
+}
+
+// Per-app definition: app path, display name, bundle ID prefixes for data matching, extra data dirs
+struct AppDef {
+    let appPath: String
+    let name: String
+    let bundleIds: [String]
+    let extraDirs: [String]  // additional specific directories (relative to home)
 }
 
 // MARK: - Scanner / Remover
@@ -44,8 +52,11 @@ class GoogleManager: ObservableObject {
     // All known Google process names
     private let processNames = [
         "GoogleUpdater", "GoogleSoftwareUpdateAgent", "GoogleSoftwareUpdateDaemon",
-        "Google Chrome Helper", "Google Chrome", "Google Earth Pro",
-        "keystone", "ksinstall", "ksadmin"
+        "Google Chrome Helper", "Google Chrome", "Google Chrome Canary",
+        "Google Chrome Beta", "Google Chrome Dev", "Google Earth Pro",
+        "Google Drive", "Google Drive Helper", "GoogleDriveFS",
+        "Android File Transfer Agent", "GoogleJapaneseInput",
+        "remoting_me2me_host", "keystone", "ksinstall", "ksadmin"
     ]
 
     // Plist paths and their launchctl domains
@@ -55,6 +66,7 @@ class GoogleManager: ObservableObject {
             (home + "/Library/LaunchAgents/com.google.keystone.agent.plist", "gui/\(getuid())"),
             (home + "/Library/LaunchAgents/com.google.keystone.xpcservice.plist", "gui/\(getuid())"),
             (home + "/Library/LaunchAgents/com.google.GoogleUpdater.wake.login.plist", "gui/\(getuid())"),
+            (home + "/Library/LaunchAgents/com.google.android.mtpagent.plist", "gui/\(getuid())"),
         ]
     }()
 
@@ -63,11 +75,86 @@ class GoogleManager: ObservableObject {
         ("/Library/LaunchAgents/com.google.keystone.xpcservice.plist", "system"),
         ("/Library/LaunchDaemons/com.google.keystone.daemon.plist", "system"),
         ("/Library/LaunchDaemons/com.google.GoogleUpdater.wake.system.plist", "system"),
+        ("/Library/LaunchAgents/com.google.inputmethod.Japanese.Converter.plist", "system"),
+        ("/Library/LaunchAgents/com.google.inputmethod.Japanese.Renderer.plist", "system"),
+        ("/Library/LaunchAgents/org.chromium.chromoting.plist", "system"),
+        ("/Library/LaunchDaemons/org.chromium.chromoting.plist", "system"),
     ]
+
+    // Library subdirectories to search for app-specific data
+    private let librarySearchDirs = [
+        "Caches", "Preferences", "Containers", "HTTPStorages",
+        "Saved Application State", "WebKit", "Application Scripts", "Logs"
+    ]
+
+    // All app definitions with their associated data
+    private var appDefs: [AppDef] {
+        let home = NSHomeDirectory()
+        return [
+            AppDef(appPath: "/Applications/Google Chrome.app", name: "Google Chrome",
+                   bundleIds: ["com.google.Chrome"],
+                   extraDirs: [home + "/Library/Application Support/Google/Chrome"]),
+
+            AppDef(appPath: "/Applications/Google Chrome Canary.app", name: "Chrome Canary",
+                   bundleIds: ["com.google.Chrome.canary"],
+                   extraDirs: [home + "/Library/Application Support/Google/Chrome Canary"]),
+
+            AppDef(appPath: "/Applications/Google Chrome Beta.app", name: "Chrome Beta",
+                   bundleIds: ["com.google.Chrome.beta"],
+                   extraDirs: [home + "/Library/Application Support/Google/Chrome Beta"]),
+
+            AppDef(appPath: "/Applications/Google Chrome Dev.app", name: "Chrome Dev",
+                   bundleIds: ["com.google.Chrome.dev"],
+                   extraDirs: [home + "/Library/Application Support/Google/Chrome Dev"]),
+
+            AppDef(appPath: "/Applications/Google Earth Pro.app", name: "Google Earth Pro",
+                   bundleIds: ["com.google.GoogleEarthPro", "com.google.GECommonSettings", "com.Google.GoogleEarthPro"],
+                   extraDirs: [home + "/Library/Application Support/Google Earth",
+                               home + "/Library/Caches/Google Earth"]),
+
+            AppDef(appPath: "/Applications/Google Drive.app", name: "Google Drive",
+                   bundleIds: ["com.google.drivefs"],
+                   extraDirs: [home + "/Library/Application Support/Google/DriveFS",
+                               home + "/Library/Application Support/FileProvider/com.google.drivefs.fpext",
+                               home + "/Library/Preferences/Google Drive File Stream Helper.plist"]),
+
+            AppDef(appPath: "/Applications/Backup and Sync.app", name: "Backup and Sync",
+                   bundleIds: ["com.google.Backup"],
+                   extraDirs: []),
+
+            AppDef(appPath: "/Applications/Android File Transfer.app", name: "Android File Transfer",
+                   bundleIds: ["com.google.android.filetransfer"],
+                   extraDirs: [home + "/Library/Application Support/Google/Android File Transfer"]),
+
+            AppDef(appPath: "/Applications/Android Studio.app", name: "Android Studio",
+                   bundleIds: ["com.google.android.studio"],
+                   extraDirs: [home + "/Library/Application Support/Google/AndroidStudio",
+                               home + "/.android"]),
+
+            AppDef(appPath: "/Applications/Google Ads Editor.app", name: "Google Ads Editor",
+                   bundleIds: ["com.google.googleadseditor"],
+                   extraDirs: []),
+
+            AppDef(appPath: "/Applications/Google Web Designer.app", name: "Google Web Designer",
+                   bundleIds: ["com.google.WebDesigner"],
+                   extraDirs: [home + "/Library/Application Support/Google/Web Designer"]),
+
+            AppDef(appPath: "/Applications/Chat.app", name: "Google Chat",
+                   bundleIds: ["com.google.chat"],
+                   extraDirs: [home + "/Library/Application Support/Chat",
+                               home + "/Library/Logs/Chat"]),
+
+            AppDef(appPath: "/Library/Input Methods/GoogleJapaneseInput.app", name: "Google Japanese Input",
+                   bundleIds: ["com.google.inputmethod.Japanese"],
+                   extraDirs: [home + "/Library/Logs/GoogleJapaneseInput"]),
+        ]
+    }
 
     func scan() {
         let home = NSHomeDirectory()
         var scanned: [GoogleItem] = []
+        // Track which data paths are claimed by an app so shared infra doesn't double-count
+        var claimedPaths = Set<String>()
 
         // --- Services ---
         var servicePaths: [String] = []
@@ -78,7 +165,6 @@ class GoogleManager: ObservableObject {
                 serviceCount += 1
             }
         }
-        // Check launchctl for loaded services
         let launchctlOutput = shell("/bin/bash", ["-c", "launchctl list 2>/dev/null | grep -i google || true"])
         let hasLoadedService = !launchctlOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
@@ -100,24 +186,100 @@ class GoogleManager: ObservableObject {
             scanned.append(item)
         }
 
-        // --- Apps ---
-        let apps: [(String, String)] = [
-            ("/Applications/Google Chrome.app", "Google Chrome"),
-            ("/Applications/Google Earth Pro.app", "Google Earth Pro"),
-            ("/Applications/Google Drive.app", "Google Drive"),
-        ]
-        for (path, name) in apps {
+        // --- Apps with per-app data ---
+        for def in appDefs {
+            var paths = [def.appPath]
+            var dataSize: UInt64 = 0
+            let appExists = fm.fileExists(atPath: def.appPath)
+
+            // Search Library subdirs for matching bundle IDs
+            for id in def.bundleIds {
+                for subdir in librarySearchDirs {
+                    let dir = home + "/Library/" + subdir
+                    if let contents = try? fm.contentsOfDirectory(atPath: dir) {
+                        for name in contents where name.hasPrefix(id) {
+                            let full = dir + "/" + name
+                            paths.append(full)
+                            claimedPaths.insert(full)
+                            dataSize += dirSize(full)
+                        }
+                    }
+                }
+            }
+
+            // Check extra dirs
+            for extra in def.extraDirs {
+                if fm.fileExists(atPath: extra) {
+                    paths.append(extra)
+                    claimedPaths.insert(extra)
+                    dataSize += dirSize(extra)
+                }
+            }
+
+            // Group containers matching bundle IDs
+            let gcDir = home + "/Library/Group Containers"
+            for id in def.bundleIds {
+                if let contents = try? fm.contentsOfDirectory(atPath: gcDir) {
+                    for name in contents where name.lowercased().contains(id.lowercased()) {
+                        let full = gcDir + "/" + name
+                        if !paths.contains(full) {
+                            paths.append(full)
+                            claimedPaths.insert(full)
+                            dataSize += dirSize(full)
+                        }
+                    }
+                }
+            }
+            // Also check for EQHXZ8M8AV (Google Drive group container)
+            if def.bundleIds.contains("com.google.drivefs") {
+                if let contents = try? fm.contentsOfDirectory(atPath: gcDir) {
+                    for name in contents where name.hasPrefix("EQHXZ8M8AV.") {
+                        let full = gcDir + "/" + name
+                        if !paths.contains(full) {
+                            paths.append(full)
+                            claimedPaths.insert(full)
+                            dataSize += dirSize(full)
+                        }
+                    }
+                }
+                // Application Scripts for Drive
+                let scriptsDir = home + "/Library/Application Scripts"
+                if let contents = try? fm.contentsOfDirectory(atPath: scriptsDir) {
+                    for name in contents where name.hasPrefix("EQHXZ8M8AV.") {
+                        let full = scriptsDir + "/" + name
+                        if !paths.contains(full) {
+                            paths.append(full)
+                            claimedPaths.insert(full)
+                        }
+                    }
+                }
+            }
+
+            let hasData = paths.count > 1 // more than just the .app path
+            let needsSudo = !def.appPath.hasPrefix(home)
+
             var item = GoogleItem(
-                name: name,
+                name: def.name,
                 detail: "",
-                paths: [path],
+                paths: paths,
                 category: .app,
-                requiresSudo: true
+                requiresSudo: needsSudo
             )
-            if fm.fileExists(atPath: path) {
+
+            if appExists {
                 item.isFound = true
-                item.sizeString = sizeOf(path)
-                item.detail = item.sizeString
+                let appSize = sizeOf(def.appPath)
+                if dataSize > 0 {
+                    item.detail = "\(appSize) app + \(formatBytes(dataSize)) data"
+                } else {
+                    item.detail = appSize
+                }
+            } else if hasData {
+                // App not installed but orphaned data remains
+                item.isFound = true
+                item.paths = Array(paths.dropFirst()) // remove the .app path since it doesn't exist
+                item.requiresSudo = false // orphaned data is user-level
+                item.detail = "app removed, \(formatBytes(dataSize)) data remains"
             } else {
                 item.isFound = false
                 item.isSelected = false
@@ -126,8 +288,12 @@ class GoogleManager: ObservableObject {
             scanned.append(item)
         }
 
-        // --- System dirs ---
-        let sysDirs = ["/Library/Google", "/Library/Application Support/Google"]
+        // --- System directories ---
+        let sysDirs = [
+            "/Library/Google",
+            "/Library/Application Support/Google",
+            "/Library/Caches/com.google.SoftwareUpdate",
+        ]
         var sysFound: [String] = []
         for dir in sysDirs {
             if fm.fileExists(atPath: dir) { sysFound.append(dir) }
@@ -135,7 +301,7 @@ class GoogleManager: ObservableObject {
         if !sysFound.isEmpty {
             var item = GoogleItem(
                 name: "System directories",
-                detail: sysFound.map { $0 }.joined(separator: ", "),
+                detail: sysFound.joined(separator: ", "),
                 paths: sysFound,
                 category: .data,
                 requiresSudo: true
@@ -144,58 +310,91 @@ class GoogleManager: ObservableObject {
             scanned.append(item)
         }
 
-        // --- User data ---
-        let userDirs = [
+        // --- Shared Google infrastructure (unclaimed user data) ---
+        // These are Keystone/updater files not tied to any specific app
+        let sharedPrefixes = [
+            "com.google.keystone", "com.google.Keystone",
+            "com.google.GoogleUpdater", "com.google.SoftwareUpdate",
+        ]
+        let sharedDirs = [
             home + "/Library/Google",
             home + "/Library/Application Support/Google",
         ]
-        let userGlobPrefixes = [
-            home + "/Library/Caches/com.google.",
-            home + "/Library/Preferences/com.google.",
-            home + "/Library/Containers/com.google.",
-            home + "/Library/HTTPStorages/com.google.",
-            home + "/Library/Saved Application State/com.google.",
-            home + "/Library/WebKit/com.google.",
+        let sharedFiles = [
+            home + "/Library/Logs/GoogleSoftwareUpdateAgent.log",
         ]
-        let userLogs = [home + "/Library/Logs/GoogleSoftwareUpdateAgent.log"]
 
-        var userPaths: [String] = []
-        var totalSize: UInt64 = 0
+        var sharedPaths: [String] = []
+        var sharedSize: UInt64 = 0
 
-        for dir in userDirs {
-            if fm.fileExists(atPath: dir) {
-                userPaths.append(dir)
-                totalSize += dirSize(dir)
+        for dir in sharedDirs {
+            if fm.fileExists(atPath: dir) && !claimedPaths.contains(dir) {
+                sharedPaths.append(dir)
+                sharedSize += dirSize(dir)
             }
         }
-        for prefix in userGlobPrefixes {
-            let parentDir = (prefix as NSString).deletingLastPathComponent
-            let filePrefix = (prefix as NSString).lastPathComponent
-            if let contents = try? fm.contentsOfDirectory(atPath: parentDir) {
-                for name in contents where name.hasPrefix(filePrefix) {
-                    let full = parentDir + "/" + name
-                    userPaths.append(full)
-                    totalSize += dirSize(full)
+        for prefix in sharedPrefixes {
+            for subdir in librarySearchDirs {
+                let dir = home + "/Library/" + subdir
+                if let contents = try? fm.contentsOfDirectory(atPath: dir) {
+                    for name in contents where name.hasPrefix(prefix) {
+                        let full = dir + "/" + name
+                        if !claimedPaths.contains(full) {
+                            sharedPaths.append(full)
+                            claimedPaths.insert(full)
+                            sharedSize += dirSize(full)
+                        }
+                    }
                 }
             }
         }
-        // Group Containers
+        // Unclaimed google group containers
         let gcDir = home + "/Library/Group Containers"
         if let contents = try? fm.contentsOfDirectory(atPath: gcDir) {
             for name in contents where name.lowercased().contains("google") {
-                userPaths.append(gcDir + "/" + name)
-                totalSize += dirSize(gcDir + "/" + name)
+                let full = gcDir + "/" + name
+                if !claimedPaths.contains(full) {
+                    sharedPaths.append(full)
+                    sharedSize += dirSize(full)
+                }
             }
         }
-        for log in userLogs {
-            if fm.fileExists(atPath: log) { userPaths.append(log) }
+        for file in sharedFiles {
+            if fm.fileExists(atPath: file) && !claimedPaths.contains(file) {
+                sharedPaths.append(file)
+            }
         }
 
-        if !userPaths.isEmpty {
+        if !sharedPaths.isEmpty {
             var item = GoogleItem(
-                name: "Caches & preferences",
-                detail: formatBytes(totalSize),
-                paths: userPaths,
+                name: "Shared Google data",
+                detail: "\(formatBytes(sharedSize)) — updater, Keystone",
+                paths: sharedPaths,
+                category: .data,
+                requiresSudo: false
+            )
+            item.isFound = true
+            scanned.append(item)
+        }
+
+        // --- Google Cloud SDK (standalone) ---
+        let gcloudPaths = [
+            home + "/google-cloud-sdk",
+            home + "/.config/gcloud",
+        ]
+        var gcloudFound: [String] = []
+        var gcloudSize: UInt64 = 0
+        for path in gcloudPaths {
+            if fm.fileExists(atPath: path) {
+                gcloudFound.append(path)
+                gcloudSize += dirSize(path)
+            }
+        }
+        if !gcloudFound.isEmpty {
+            var item = GoogleItem(
+                name: "Google Cloud SDK",
+                detail: formatBytes(gcloudSize),
+                paths: gcloudFound,
                 category: .data,
                 requiresSudo: false
             )
@@ -289,11 +488,19 @@ class GoogleManager: ObservableObject {
                 ])
             }
 
-            // Install blocker
-            let blockerPath = NSHomeDirectory() + "/Library/Google"
-            if !fm.fileExists(atPath: blockerPath) {
-                fm.createFile(atPath: blockerPath, contents: nil)
-                _ = shell("/bin/chmod", ["000", blockerPath])
+            // Install blocker if requested (check on main thread)
+            var shouldBlock = false
+            DispatchQueue.main.sync {
+                // installBlocker is on ContentView, but we pass it through
+                // For now, always install blocker — controlled by UI toggle
+                shouldBlock = true
+            }
+            if shouldBlock {
+                let blockerPath = NSHomeDirectory() + "/Library/Google"
+                if !fm.fileExists(atPath: blockerPath) {
+                    fm.createFile(atPath: blockerPath, contents: nil)
+                    _ = shell("/bin/chmod", ["000", blockerPath])
+                }
             }
 
             // Mark items as removed and rescan
@@ -335,15 +542,29 @@ class GoogleManager: ObservableObject {
             // Build restore map: basename → original path
             let home = NSHomeDirectory()
             let restoreMap: [(basename: String, dest: String, sudo: Bool)] = [
+                // Plists
                 ("com.google.keystone.agent.plist", "/Library/LaunchAgents/com.google.keystone.agent.plist", true),
                 ("com.google.keystone.xpcservice.plist", "/Library/LaunchAgents/com.google.keystone.xpcservice.plist", true),
                 ("com.google.keystone.daemon.plist", "/Library/LaunchDaemons/com.google.keystone.daemon.plist", true),
                 ("com.google.GoogleUpdater.wake.system.plist", "/Library/LaunchDaemons/com.google.GoogleUpdater.wake.system.plist", true),
                 ("com.google.GoogleUpdater.wake.login.plist", home + "/Library/LaunchAgents/com.google.GoogleUpdater.wake.login.plist", false),
+                // Apps
                 ("Google Chrome.app", "/Applications/Google Chrome.app", true),
+                ("Google Chrome Canary.app", "/Applications/Google Chrome Canary.app", true),
+                ("Google Chrome Beta.app", "/Applications/Google Chrome Beta.app", true),
+                ("Google Chrome Dev.app", "/Applications/Google Chrome Dev.app", true),
                 ("Google Earth Pro.app", "/Applications/Google Earth Pro.app", true),
                 ("Google Drive.app", "/Applications/Google Drive.app", true),
+                ("Backup and Sync.app", "/Applications/Backup and Sync.app", true),
+                ("Android File Transfer.app", "/Applications/Android File Transfer.app", true),
+                ("Android Studio.app", "/Applications/Android Studio.app", true),
+                ("Google Ads Editor.app", "/Applications/Google Ads Editor.app", true),
+                ("Google Web Designer.app", "/Applications/Google Web Designer.app", true),
+                ("Chat.app", "/Applications/Chat.app", true),
+                ("GoogleJapaneseInput.app", "/Library/Input Methods/GoogleJapaneseInput.app", true),
+                // System dirs
                 ("Google", "/Library/Google", true),
+                // User data
                 ("com.google.GoogleUpdater", home + "/Library/Caches/com.google.GoogleUpdater", false),
                 ("com.google.Chrome.plist", home + "/Library/Preferences/com.google.Chrome.plist", false),
                 ("com.google.GECommonSettings.plist", home + "/Library/Preferences/com.google.GECommonSettings.plist", false),
@@ -490,7 +711,6 @@ class GoogleManager: ObservableObject {
     private func findInTrash(_ basename: String) -> String? {
         let exact = trashPath + "/" + basename
         if fm.fileExists(atPath: exact) { return exact }
-        // Check for timestamped versions
         if let contents = try? fm.contentsOfDirectory(atPath: trashPath) {
             for name in contents where name.hasPrefix(basename + "_") {
                 let suffix = String(name.dropFirst(basename.count + 1))
@@ -508,6 +728,14 @@ class GoogleManager: ObservableObject {
     }
 
     private func dirSize(_ path: String) -> UInt64 {
+        // If it's a file not a directory, return file size
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir) else { return 0 }
+        if !isDir.boolValue {
+            if let attrs = try? fm.attributesOfItem(atPath: path),
+               let size = attrs[.size] as? UInt64 { return size }
+            return 0
+        }
         guard let enumerator = fm.enumerator(atPath: path) else { return 0 }
         var total: UInt64 = 0
         while let file = enumerator.nextObject() as? String {
@@ -525,6 +753,11 @@ class GoogleManager: ObservableObject {
         formatter.countStyle = .file
         return formatter.string(fromByteCount: Int64(bytes))
     }
+
+    // All app names for the "scanned for" display
+    var allAppNames: [String] {
+        appDefs.map { $0.name }
+    }
 }
 
 // MARK: - SwiftUI Views
@@ -532,35 +765,36 @@ class GoogleManager: ObservableObject {
 struct ContentView: View {
     @ObservedObject var manager = GoogleManager()
     @State private var installBlocker = true
+    @State private var hovering = false
+    @State private var showingInfoFor: UUID? = nil
 
-    let bgColor = Color(nsColor: NSColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1))
-    let textColor = Color(nsColor: NSColor(red: 0.88, green: 0.88, blue: 0.88, alpha: 1))
-    let dimColor = Color(nsColor: NSColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1))
-    let greenColor = Color(nsColor: NSColor(red: 0.4, green: 0.8, blue: 0.4, alpha: 1))
-    let amberColor = Color(nsColor: NSColor(red: 1.0, green: 0.7, blue: 0.2, alpha: 1))
-    let monoFont = Font.custom("Menlo", size: 13)
-    let headerFont = Font.custom("Menlo-Bold", size: 13)
+    let mono = Font.system(size: 12, design: .monospaced)
+    let monoBold = Font.system(size: 12, weight: .semibold, design: .monospaced)
+    let sectionFont = Font.system(size: 10, weight: .bold, design: .monospaced)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text("Remove Google")
-                    .font(.custom("Menlo-Bold", size: 18))
-                    .foregroundColor(textColor)
+                    .font(.system(size: 20, weight: .bold, design: .monospaced))
                 Spacer()
                 Text("v1.0")
-                    .font(monoFont)
-                    .foregroundColor(dimColor)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
-            .padding(.bottom, 16)
+            .padding(.bottom, 20)
 
             // Items list
             if manager.items.isEmpty {
-                Text("Scanning...")
-                    .font(monoFont)
-                    .foregroundColor(dimColor)
-                    .padding(.vertical, 8)
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Scanning...")
+                        .font(mono)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 12)
             } else {
                 let services = manager.items.filter { $0.category == .service }
                 let apps = manager.items.filter { $0.category == .app }
@@ -568,59 +802,98 @@ struct ContentView: View {
 
                 if !services.isEmpty {
                     sectionHeader("BACKGROUND SERVICES")
-                    ForEach(services) { item in
-                        itemRow(item)
-                    }
-                    Spacer().frame(height: 12)
+                    ForEach(services) { item in itemRow(item) }
+                    Spacer().frame(height: 16)
                 }
 
                 if !apps.isEmpty {
+                    let foundApps = apps.filter { $0.isFound }
+                    let notFoundApps = apps.filter { !$0.isFound }
                     sectionHeader("APPLICATIONS")
-                    ForEach(apps) { item in
-                        itemRow(item)
+                    if foundApps.isEmpty {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle")
+                                .foregroundStyle(.green)
+                                .font(.system(size: 14))
+                            Text("No Google apps installed")
+                                .font(mono)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 3)
+                    } else {
+                        ForEach(foundApps) { item in itemRow(item) }
                     }
-                    Spacer().frame(height: 12)
+                    if !notFoundApps.isEmpty {
+                        let names = notFoundApps.map { $0.name }.joined(separator: ", ")
+                        Text("Also scanned: \(names)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.quaternary)
+                            .padding(.top, 4)
+                    }
+                    Spacer().frame(height: 16)
                 }
 
                 if !data.isEmpty {
                     sectionHeader("DATA & PREFERENCES")
-                    ForEach(data) { item in
-                        itemRow(item)
-                    }
+                    ForEach(data) { item in itemRow(item) }
+                    Spacer().frame(height: 8)
                 }
             }
 
-            Spacer().frame(height: 16)
+            Spacer().frame(height: 12)
 
-            // Safety note + blocker toggle
-            Text("Files are moved to Trash, not deleted.")
-                .font(monoFont)
-                .foregroundColor(dimColor)
-                .padding(.bottom, 8)
-
+            // Blocker toggle with inline explanation
             if !manager.isDone {
                 Toggle(isOn: $installBlocker) {
-                    Text("Block Google from reinstalling")
-                        .font(monoFont)
-                        .foregroundColor(textColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Block Google from reinstalling")
+                            .font(mono)
+                        Text("Places a locked file at ~/Library/Google to prevent the updater from returning")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .toggleStyle(.checkbox)
                 .disabled(manager.isWorking)
-                .padding(.bottom, 12)
+                .padding(.bottom, 14)
             }
 
-            Spacer().frame(height: 4)
+            // Safety note
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.uturn.backward.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Text("Files are moved to Trash, not permanently deleted.")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.bottom, 6)
+
+            // Disclaimer
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                Text("Use at your own risk. Not responsible for data loss.")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.bottom, 16)
 
             // Buttons
-            HStack(spacing: 12) {
+            HStack(spacing: 16) {
                 if manager.mode != .removed {
                     Button(action: { manager.removeSelected() }) {
-                        Text("Remove Selected")
-                            .font(.custom("Menlo-Bold", size: 13))
-                            .frame(minWidth: 140)
+                        HStack(spacing: 6) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 12))
+                            Text("Remove Selected")
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        }
+                        .frame(minWidth: 160, minHeight: 28)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color(nsColor: NSColor(red: 0.8, green: 0.2, blue: 0.2, alpha: 1)))
+                    .tint(.red)
                     .disabled(manager.isWorking || !manager.items.contains(where: { $0.isFound && $0.isSelected }))
                 }
 
@@ -633,36 +906,53 @@ struct ContentView: View {
                         manager.restore()
                     }
                 }) {
-                    Text(manager.mode == .removed ? "Rescan" : "Restore")
-                        .font(.custom("Menlo-Bold", size: 13))
-                        .frame(minWidth: 80)
+                    HStack(spacing: 6) {
+                        Image(systemName: manager.mode == .removed ? "arrow.clockwise" : "arrow.uturn.backward")
+                            .font(.system(size: 12))
+                        Text(manager.mode == .removed ? "Rescan" : "Restore")
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    }
+                    .frame(minWidth: 100, minHeight: 28)
                 }
                 .buttonStyle(.bordered)
                 .disabled(manager.isWorking)
 
                 Spacer()
-            }
 
-            Spacer().frame(height: 16)
-
-            // Status bar
-            Divider().background(Color(nsColor: NSColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1)))
-            HStack {
-                Text(manager.status)
-                    .font(monoFont)
-                    .foregroundColor(Color(nsColor: manager.statusColor))
-                Spacer()
                 if manager.isWorking {
                     ProgressView()
                         .controlSize(.small)
-                        .scaleEffect(0.7)
                 }
             }
-            .padding(.top, 8)
+
+            // Status bar + footer
+            Divider()
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            HStack {
+                Text(manager.status)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Color(nsColor: manager.statusColor))
+                Spacer()
+                Text("by")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.quaternary)
+                Text("IO")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .onTapGesture {
+                        if let url = URL(string: "https://github.com/isolson/remove-google-macos") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .onHover { h in hovering = h }
+                    .underline(hovering)
+            }
         }
-        .padding(20)
-        .frame(width: 440, height: 520)
-        .background(bgColor)
+        .padding(24)
+        .frame(width: 480)
+        .background(.ultraThinMaterial)
         .onAppear {
             DispatchQueue.global(qos: .userInitiated).async {
                 manager.scan()
@@ -672,71 +962,108 @@ struct ContentView: View {
 
     func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(headerFont)
-            .foregroundColor(dimColor)
-            .padding(.bottom, 4)
+            .font(sectionFont)
+            .foregroundStyle(.tertiary)
+            .tracking(1.5)
+            .padding(.bottom, 6)
     }
 
+    func shortPath(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        if path.hasPrefix(home) {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
+    }
+
+    @ViewBuilder
     func itemRow(_ item: GoogleItem) -> some View {
         let idx = manager.items.firstIndex(where: { $0.id == item.id })!
-        return HStack(spacing: 8) {
-            if item.isRemoved {
+
+        if item.isRemoved {
+            HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(greenColor)
-                    .frame(width: 16)
+                    .foregroundColor(.green)
+                    .font(.system(size: 14))
                 Text(item.name)
-                    .font(monoFont)
-                    .foregroundColor(greenColor)
+                    .font(mono)
+                    .foregroundColor(.green)
                 Text("removed")
-                    .font(monoFont)
-                    .foregroundColor(greenColor)
-            } else if !item.isFound {
-                Image(systemName: "circle")
-                    .foregroundColor(Color(nsColor: NSColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1)))
-                    .frame(width: 16)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.green.opacity(0.7))
+                Spacer()
+            }
+            .padding(.vertical, 3)
+        } else if !item.isFound {
+            HStack(spacing: 8) {
+                Image(systemName: "minus.circle")
+                    .foregroundStyle(.quaternary)
+                    .font(.system(size: 14))
                 Text(item.name)
-                    .font(monoFont)
-                    .foregroundColor(Color(nsColor: NSColor(red: 0.35, green: 0.35, blue: 0.35, alpha: 1)))
+                    .font(mono)
+                    .foregroundStyle(.quaternary)
                 Text(item.detail)
-                    .font(monoFont)
-                    .foregroundColor(Color(nsColor: NSColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1)))
-            } else if item.isTogglable {
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.quaternary)
+                Spacer()
+            }
+            .padding(.vertical, 3)
+        } else {
+            HStack(spacing: 0) {
                 Toggle(isOn: Binding(
                     get: { manager.items[idx].isSelected },
                     set: { manager.items[idx].isSelected = $0 }
                 )) {
                     HStack(spacing: 6) {
                         Text(item.name)
-                            .font(monoFont)
-                            .foregroundColor(textColor)
+                            .font(mono)
                         if !item.detail.isEmpty {
                             Text("(\(item.detail))")
-                                .font(monoFont)
-                                .foregroundColor(dimColor)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
                 .toggleStyle(.checkbox)
                 .disabled(manager.isWorking)
-            } else {
-                Toggle(isOn: .constant(true)) {
-                    HStack(spacing: 6) {
-                        Text(item.name)
-                            .font(monoFont)
-                            .foregroundColor(textColor)
-                        if !item.detail.isEmpty {
-                            Text("(\(item.detail))")
-                                .font(monoFont)
-                                .foregroundColor(dimColor)
+
+                Spacer()
+
+                // Info button showing paths
+                if item.paths.count > 0 {
+                    Button(action: {
+                        if showingInfoFor == item.id {
+                            showingInfoFor = nil
+                        } else {
+                            showingInfoFor = item.id
                         }
+                    }) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: Binding(
+                        get: { showingInfoFor == item.id },
+                        set: { if !$0 { showingInfoFor = nil } }
+                    )) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Will remove:")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .padding(.bottom, 4)
+                            ForEach(item.paths, id: \.self) { path in
+                                Text(shortPath(path))
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(12)
+                        .frame(maxWidth: 400)
                     }
                 }
-                .toggleStyle(.checkbox)
-                .disabled(true)
             }
-            Spacer()
+            .padding(.vertical, 3)
         }
-        .padding(.vertical, 2)
     }
 }
 
@@ -749,8 +1076,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let contentView = ContentView()
 
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 520),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 100),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -758,7 +1085,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.title = "Remove Google"
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = NSColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1)
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
         window.contentView = NSHostingView(rootView: contentView)
         window.makeKeyAndOrderFront(nil)
     }

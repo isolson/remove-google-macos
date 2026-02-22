@@ -1,12 +1,14 @@
 # Remove Google from macOS
 
-A small native macOS app that safely removes **all** Google software from your Mac — not just Chrome, but everything Google installs: the hidden background updater that phones home every hour, apps, cached data, preferences, and system-level services.
+A native macOS app that finds and removes all Google software — apps, the hidden background updater, caches, preferences, and system services. Everything goes to Trash; nothing is permanently deleted.
+
+![screenshot](screenshot.png)
 
 ## Download
 
-**[Download Remove Google.app](https://github.com/isolson/remove-google-macos/releases/latest)** from the Releases page.
+**[Download Remove Google.app](https://github.com/isolson/remove-google-macos/releases/latest)**
 
-Or build it yourself:
+Or build from source:
 
 ```bash
 git clone https://github.com/isolson/remove-google-macos.git
@@ -17,61 +19,35 @@ open "build/Remove Google.app"
 
 ## How it works
 
-When you open the app, it immediately scans your Mac and shows you everything Google it found. Each item has a checkbox:
+1. Open the app — it scans your Mac automatically
+2. Review what it found, uncheck anything you want to keep
+3. Click **Remove Selected**
+4. Reboot recommended
 
-- **Applications** (Google Chrome, Earth Pro, Drive) — you choose which to keep or remove
-- **Background services** — the hourly Google Updater and its launch configs
-- **Data & preferences** — caches, preferences, support files under ~/Library
-
-Click **Remove Selected** and you're done. The app asks for your password once (for system-level files), moves everything to Trash, and installs a blocker to prevent Google from reinstalling itself.
-
-Changed your mind? Click **Restore** to put everything back from Trash.
-
-## What it removes
-
-### Applications (you choose which ones)
-
-- **Google Chrome** — web browser
-- **Google Earth Pro** — desktop mapping/satellite app
-- **Google Drive** — cloud file sync app
-
-### Background services (removed automatically)
-
-- **Google Updater (Keystone)** — a hidden service that runs every hour, checks for updates, and sends hardware info to Google
-- **LaunchAgents and LaunchDaemons** — the system configs that tell macOS to start Google services on login and on a timer
-
-### Data and support files (removed automatically)
-
-- System directories (`/Library/Google/`, `/Library/Application Support/Google/`)
-- Caches, preferences, HTTP storage, WebKit data, containers, saved state, logs
+Each app includes its own data (caches, preferences, containers). Unchecking an app keeps its data intact. Click **Restore** to put everything back from Trash.
 
 ## Is it safe?
 
-- **Nothing is permanently deleted** — everything is moved to your Trash
-- **You choose which apps to remove** — each app has its own checkbox
-- **Built-in restore** — click Restore to put everything back from Trash
-- **No trace left behind** — the app itself stores nothing; delete it when you're done
+- Everything is moved to Trash, not permanently deleted
+- Per-app checkboxes — you choose exactly what goes
+- Built-in restore from Trash
+- The app stores nothing; delete it when done
 
-A **reboot** after removal is recommended.
+## Further reading
 
-## Signing and notarization
-
-If you have an Apple Developer account:
-
-```bash
-# Build and sign
-bash build.sh --sign "Developer ID Application: Your Name (TEAM_ID)"
-
-# Notarize
-ditto -c -k --sequesterRsrc --keepParent "build/Remove Google.app" app.zip
-xcrun notarytool submit app.zip --keychain-profile "profile" --wait
-xcrun stapler staple "build/Remove Google.app"
-```
+- [Architecture and technical details](docs/ARCHITECTURE.md)
+- [What Google installs on your Mac](docs/GOOGLE_ON_MACOS.md)
 
 ## Command-line alternative
-
-Prefer the terminal? `remove-google.sh` does the same thing interactively:
 
 ```bash
 bash remove-google.sh
 ```
+
+## Signing
+
+```bash
+bash build.sh --sign "Developer ID Application: Your Name (TEAM_ID)"
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for notarization steps.
